@@ -2,15 +2,50 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Community Chat Room</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Room</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="chat-container">
-        <div id="messages"></div>
-        <form id="send-form">
-            <input type="text" id="message-input" autocomplete="off" placeholder="Type a message..." required />
-            <button type="submit">Send</button>
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen">
+        <div class="login-container">
+            <h1>Chat Room</h1>
+            <form id="login-form">
+                <input 
+                    type="text" 
+                    id="username-input" 
+                    placeholder="Enter your username" 
+                    autocomplete="off"
+                    maxlength="20"
+                    required 
+                />
+                <button type="submit" class="btn-primary">Join Chat</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Chat Screen -->
+    <div id="chat-screen" class="screen hidden">
+        <div class="chat-header">
+            <h2>Chat Room</h2>
+            <div class="user-info">
+                <span id="current-user"></span>
+                <button id="logout-btn" class="btn-logout">Logout</button>
+            </div>
+        </div>
+        
+        <div id="messages" class="messages-container"></div>
+        
+        <form id="send-form" class="message-form">
+            <input 
+                type="text" 
+                id="message-input" 
+                autocomplete="off" 
+                placeholder="Type a message..." 
+                required 
+            />
+            <button type="submit" class="btn-send">Send</button>
         </form>
     </div>
 
