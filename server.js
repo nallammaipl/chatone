@@ -3,48 +3,45 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const socketIo = require("socket.io");
-const Database = require("better-sqlite3");
+const { MongoClient } = require("mongodb");
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// Initialize SQLite database
-const dbPath = process.env.DB_FILE || "messages.db";
-const db = new Database(path.join(__dirname, dbPath));
+const dbUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017";
+const dbName = process.env.DB_NAME || "chatone";
+let messagesCollection;
 
-console.log("Connected to SQLite database");
-initializeDatabase();
-
-// Initialize database schema
-function initializeDatabase() {
+async function initializeDatabase() {
     try {
-        db.exec(`
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                message TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log("Messages table initialized");
+        const client = new MongoClient(dbUri);
+        await client.connect();
+        const db = client.db(dbName);
+        messagesCollection = db.collection("messages");
+        await messagesCollection.createIndex({ timestamp: 1 });
+        console.log("Connected to MongoDB database");
+        console.log("Messages collection initialized");
     } catch (err) {
-        console.error("Error creating table:", err);
+        console.error("Error connecting to MongoDB:", err);
+        process.exit(1);
     }
 }
 
 // Save message to database
-function saveMessage(username, message) {
+async function saveMessage(username, message) {
     try {
-        const stmt = db.prepare(
-            `INSERT INTO messages (username, message, timestamp) VALUES (?, ?, datetime('now'))`
-        );
-        const result = stmt.run(username, message);
-        return {
-            id: result.lastInsertRowid,
+        const doc = {
             username,
             message,
-            timestamp: new Date().toISOString()
+            timestamp: new Date()
+        };
+        const result = await messagesCollection.insertOne(doc);
+        return {
+            id: result.insertedId.toString(),
+            username,
+            message,
+            timestamp: doc.timestamp.toISOString()
         };
     } catch (err) {
         console.error("Error saving message:", err);
@@ -53,13 +50,22 @@ function saveMessage(username, message) {
 }
 
 // Retrieve previous messages
-function getMessages(limit = 50) {
+async function getMessages(limit = 50) {
     try {
-        const stmt = db.prepare(
-            `SELECT id, username, message, timestamp FROM messages ORDER BY timestamp DESC LIMIT ?`
-        );
-        const rows = stmt.all(limit);
-        return rows.reverse();
+        const rows = await messagesCollection
+            .find({}, { projection: { username: 1, message: 1, timestamp: 1 } })
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .toArray();
+
+        return rows
+            .reverse()
+            .map((row) => ({
+                id: row._id.toString(),
+                username: row.username,
+                message: row.message,
+                timestamp: row.timestamp.toISOString()
+            }));
     } catch (err) {
         console.error("Error retrieving messages:", err);
         return [];
@@ -71,13 +77,13 @@ app.use(express.static(path.join(__dirname, "public")));
 io.on("connection", (socket) => {
     console.log("A user connected");
 
-    socket.on("new-user", (username) => {
+    socket.on("new-user", async (username) => {
         socket.username = username;
-        
+
         // Send previous messages to the new user
-        const messages = getMessages(50);
+        const messages = await getMessages(50);
         socket.emit("load-messages", messages);
-        
+
         // Notify others
         socket.broadcast.emit("chat-message", {
             username: "System",
@@ -87,10 +93,10 @@ io.on("connection", (socket) => {
         });
     });
 
-    socket.on("send-chat-message", (msg) => {
+    socket.on("send-chat-message", async (msg) => {
         if (socket.username && msg.trim()) {
             // Save to database and emit to all users
-            const savedMessage = saveMessage(socket.username, msg);
+            const savedMessage = await saveMessage(socket.username, msg);
             if (savedMessage) {
                 io.emit("chat-message", {
                     id: savedMessage.id,
@@ -116,6 +122,12 @@ io.on("connection", (socket) => {
 });
 
 const port = process.env.PORT || 3001;
-server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+
+initializeDatabase().then(() => {
+    server.listen(port, () => {
+        console.log(`Server running on http://localhost:${port}`);
+    });
+}).catch((err) => {
+    console.error("Failed to initialize database:", err);
+    process.exit(1);
 });
