@@ -20,26 +20,43 @@ const dbName = process.env.DB_NAME || "chatone";
 let messagesCollection;
 
 async function initializeDatabase() {
-    try {
-        const client = new MongoClient(dbUri);
+    if (!dbUri) {
+        console.error("MONGO_URI is not set. Set MONGO_URI in environment variables or use MongoDB Atlas.");
+        throw new Error("MONGO_URI not configured");
+    }
 
-        await client.connect();
+    const maxAttempts = 8;
+    let attempt = 0;
+    let delay = 1000; // ms
 
-        console.log("Connected to MongoDB");
+    while (attempt < maxAttempts) {
+        try {
+            attempt += 1;
+            console.log(`Attempting MongoDB connection (attempt ${attempt}/${maxAttempts}) to ${dbUri}`);
+            const client = new MongoClient(dbUri);
+            await client.connect();
 
-        const db = client.db(dbName);
+            console.log("Connected to MongoDB");
 
-        messagesCollection = db.collection("messages");
+            const db = client.db(dbName);
+            messagesCollection = db.collection("messages");
+            await messagesCollection.createIndex({ timestamp: 1 });
 
-        await messagesCollection.createIndex({ timestamp: 1 });
-
-        console.log("Messages collection initialized");
-
-    } catch (err) {
-        console.error("MongoDB Connection Error:");
-        console.error(err.stack);
-
-        process.exit(1);
+            console.log("Messages collection initialized");
+            return;
+        } catch (err) {
+            console.error(`MongoDB connection attempt ${attempt} failed:`);
+            console.error(err && err.stack ? err.stack : err);
+            if (attempt >= maxAttempts) {
+                console.error(`Exhausted ${maxAttempts} MongoDB connection attempts.`);
+                throw err;
+            }
+            console.log(`Retrying MongoDB connection in ${delay}ms...`);
+            // exponential backoff (cap at 30s)
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((res) => setTimeout(res, delay));
+            delay = Math.min(delay * 2, 30000);
+        }
     }
 }
 
@@ -187,19 +204,16 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3000;
 
-initializeDatabase()
-    .then(() => {
-
+(async () => {
+    try {
+        await initializeDatabase();
         server.listen(PORT, () => {
-
             console.log(`Server running on port ${PORT}`);
         });
-
-    })
-    .catch((err) => {
-
-        console.error("Failed to initialize database:");
-        console.error(err.stack);
-
+    } catch (err) {
+        console.error("Failed to initialize database after retries:");
+        console.error(err && err.stack ? err.stack : err);
+        // Exit so the hosting platform can retry or surface the failure in logs
         process.exit(1);
-    });
+    }
+})();
